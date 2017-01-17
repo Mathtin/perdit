@@ -1,0 +1,9 @@
+Client/obj/Debug/*
+Client/obj/Release/*
+Server/obj/Debug/*
+Server/obj/Release/*
+SocSecExc/obj/Debug/*
+SocSecExc/obj/Release/*
+Debug/*
+Release/*
+Alpha/

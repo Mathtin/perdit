@@ -1,0 +1,37 @@
+# Project: Perdit Server Release
+
+CPP       = g++
+CC        = gcc
+OBJDIR    = ../obj/Release/
+RESDIR    = ../res/
+OUTPUTDIR = ../../Release/
+SSESRCDIR = ../../SocSecExc/src/
+OBJ       = $(OBJDIR)PerditServer.o $(RESDIR)PerditServer.res $(OBJDIR)PerditUser.o
+LINKOBJ   = $(OBJDIR)PerditServer.o $(RESDIR)PerditServer.res $(OBJDIR)PerditUser.o -lSocSecExc -lcryptopp
+LIBS      = -L"$(OUTPUTDIR)" -L"$(SSESRCDIR)crypto++"
+INCS      = -I"$(SSESRCDIR)" -I"$(SSESRCDIR)crypto++"
+CXXINCS   = -I"$(SSESRCDIR)" -I"$(SSESRCDIR)crypto++"
+CXXFLAGS  = $(INCS)    -std=c++11 -Wall -pedantic
+CFLAGS    = $(CXXINCS) -std=c11   -Wall -pedantic
+BIN       = PerditServer.exe
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before $(OUTPUTDIR)$(BIN) all-after
+
+clean:
+	rm -rf $(OBJ) $(OUTPUTDIR)$(BIN)
+
+#Object-file dependencies
+
+$(RESDIR)PerditServer.res: PerditServer.rc
+	windres $< -O coff -o $@
+
+$(OBJDIR)PerditUser.o: PerditUser.cpp
+	$(CPP) -c $< -o $@ $(CXXFLAGS)
+
+$(OBJDIR)PerditServer.o: PerditServer.cpp $(SSESRCDIR)Socket.h $(SSESRCDIR)RSAKeyManager.h $(SSESRCDIR)PackageManager.h
+	$(CPP) -c $< -o $@ $(CXXFLAGS)
+
+$(OUTPUTDIR)$(BIN): $(OBJ)
+	$(CPP) $(LINKOBJ) -o $(OUTPUTDIR)$(BIN) $(LIBS)

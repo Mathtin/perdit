@@ -1,0 +1,24 @@
+103 ICON "../res/Perditio.ico"
+1 VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"
+    BEGIN
+      VALUE "CompanyName", "Corrupted Prj."
+      VALUE "FileDescription", "Perdit Messenger Client"
+      VALUE "FileVersion", "1.0"
+      VALUE "InternalName", "PerditClient"
+      VALUE "LegalCopyright", "Mathtin"
+      VALUE "OriginalFilename", "PerditClient.exe"
+      VALUE "ProductName", "Perdit Messenger Client"
+      VALUE "ProductVersion", "1.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END

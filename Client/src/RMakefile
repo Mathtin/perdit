@@ -1,0 +1,34 @@
+# Project: Perdit Client Release
+
+CPP       = g++
+CC        = gcc
+OBJDIR    = ../obj/Release/
+RESDIR    = ../res/
+OUTPUTDIR = ../../Release/
+SSESRCDIR = ../../SocSecExc/src/
+OBJ       = $(OBJDIR)PerditClient.o $(RESDIR)PerditClient.res
+LINKOBJ   = $(OBJDIR)PerditClient.o $(RESDIR)PerditClient.res -lSocSecExc -lcryptopp
+LIBS      = -L"$(OUTPUTDIR)" -L"$(SSESRCDIR)crypto++"
+INCS      = -I"$(SSESRCDIR)" -I"$(SSESRCDIR)crypto++"
+CXXINCS   = -I"$(SSESRCDIR)" -I"$(SSESRCDIR)crypto++"
+CXXFLAGS  = $(INCS)    -std=c++11 -Wall -pedantic
+CFLAGS    = $(CXXINCS) -std=c11   -Wall -pedantic
+BIN       = PerditClient.exe
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before $(OUTPUTDIR)$(BIN) all-after
+
+clean:
+	rm -rf $(OBJ) $(OUTPUTDIR)$(BIN)
+
+#Object-file dependencies
+
+$(RESDIR)PerditClient.res: PerditClient.rc
+	windres $< -O coff -o $@
+
+$(OBJDIR)PerditClient.o: PerditClient.cpp $(SSESRCDIR)Socket.h $(SSESRCDIR)RSAKeyManager.h $(SSESRCDIR)PackageManager.h
+	$(CPP) -c $< -o $@ $(CXXFLAGS)
+
+$(OUTPUTDIR)$(BIN): $(OBJ)
+	$(CPP) $(LINKOBJ) -o $(OUTPUTDIR)$(BIN) $(LIBS)
