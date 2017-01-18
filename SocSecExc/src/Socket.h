@@ -41,6 +41,7 @@ class Socket {
 
     bool Opened();
     uint64_t SocketID();
+    uint64_t SetSocketID(uint64_t sid);
     int StartRecieving(RecvSocketFunc f, LPVOID recvarg, DiscSocketFunc df,
                        LPVOID discarg, char *Buffer, size_t BufferSize);
     void Send(char *data, size_t size);

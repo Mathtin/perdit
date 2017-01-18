@@ -2,7 +2,7 @@
 
 const size_t PackageManager::BufferSize = PACKSIZE << 4;
 
-PackageManager::PackageManager() : bStoppedRecv(false) {}
+PackageManager::PackageManager() : bStoppedRecv(false), PackagesRecieved(0) {}
 
 PackageManager::~PackageManager() {
     LPPackage p;
@@ -72,7 +72,8 @@ void PackageManager::SocketReciever(LPVOID lp, Socket *s, size_t Recieved) {
     while (Recieved) {
         toWrite = (Recieved > PACKSIZE ? PACKSIZE : Recieved);
         CTRL = pm->Buffer[Offset];
-        p = new Package(0, 0);
+        p = new Package(s->SocketID(), pm->PackagesRecieved);
+        pm->PackagesRecieved++;
         p->RawRewrite(pm->Buffer + Offset, toWrite, CTRL & PACKSIGNED,
                       CTRL & PACKENCRYPTED);
         std::unique_lock<std::mutex> lock(pm->mtx);
@@ -95,7 +96,7 @@ byte *PackageManager::GetBuffer() {
     return Buffer;
 }
 
-Package::Package(uint64_t uid, uint64_t paid) {
+Package::Package(uint64_t uid, uint64_t paid) : userid(uid), pacid(paid) {
     available = PACKDATASIZE;
     type = OpenPackage;
     *((uint64_t *)(UData + 1)) = htonll(uid);
@@ -119,7 +120,7 @@ uint32_t Package::Write(const byte *data, uint32_t size) {
         if (toWriteBlock > toWrite) {
             toWriteBlock = toWrite;
         }
-        memcpy(Block, data + written, toWriteBlock);
+        memcpy(Block + used, data + written, toWriteBlock);
         used += toWriteBlock;
         written += toWriteBlock;
         available -= toWriteBlock;
@@ -135,7 +136,8 @@ uint32_t Package::Write(const byte *data, uint32_t size) {
         if (toWriteBlock > toWrite) {
             toWriteBlock = toWrite;
         }
-        memcpy(Block, data + written, toWriteBlock);
+        memcpy(Block + (used - PACKFIRSTBLOCKSIZE), data + written,
+               toWriteBlock);
         used += toWriteBlock;
         written += toWriteBlock;
         available -= toWriteBlock;
@@ -151,7 +153,8 @@ uint32_t Package::Write(const byte *data, uint32_t size) {
         if (toWriteBlock > toWrite) {
             toWriteBlock = toWrite;
         }
-        memcpy(Block, data + written, toWriteBlock);
+        memcpy(Block + (used - PACKFIRSTBLOCKSIZE - PACKBLOCKSIZE),
+               data + written, toWriteBlock);
         used += toWriteBlock;
         written += toWriteBlock;
         available -= toWriteBlock;
@@ -341,11 +344,11 @@ int Package::Verify(RSA::PublicKey key) {
 }
 
 uint64_t Package::UserID() {
-    return ntohll(*(uint64_t *)(UData + 1));
+    return userid;
 }
 
 uint64_t Package::PackageID() {
-    return ntohll(*(uint64_t *)(UData + 9));
+    return pacid;
 }
 
 uint32_t Package::Size() {

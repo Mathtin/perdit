@@ -66,6 +66,8 @@ Socket::Socket(SOCKET s, bool opened) : Socket(s, opened, nullptr) {}
 
 Socket::Socket(SOCKET s, bool opened, LPSOCKADDR_IN address)
     : sock(s), addr(address), bOpened(opened) {
+    id = lrand() ^ (lrand() << 8) ^ (lrand() << 16) ^ (lrand() << 24) ^
+         (lrand() << 32) ^ (lrand() << 40) ^ (lrand() << 48) ^ (lrand() << 56);
     bRecieving = false;
     SocketAddrInfo = nullptr;
     RecvFunc = nullptr;
@@ -125,6 +127,10 @@ bool Socket::Opened() {
 
 uint64_t Socket::SocketID() {
     return id;
+}
+
+uint64_t Socket::SetSocketID(uint64_t sid) {
+    return id = sid;
 }
 
 DWORD Socket::OpenedSockets() {

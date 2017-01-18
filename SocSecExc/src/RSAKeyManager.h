@@ -1,8 +1,6 @@
 #ifndef RSAKeyManager_H
 #define RSAKeyManager_H
 
-#include <vector>
-#include <map>
 #include <cstdint>
 // Crypto++ Headers
 #include <rsa.h>
@@ -22,16 +20,17 @@ class RSAKeyManager {
     RSAKeyManager();
     ~RSAKeyManager();
 
-    int NewKey(uint64_t id);
-    int Load(const char *pubKeyFile, const char *privKeyFile, uint64_t id);
-    int Save(const char *pubKeyFile, const char *privKeyFile, uint64_t id);
-    int Delete(uint64_t id);
-    RSA::PublicKey &GetPublicKey(uint64_t id);
-    RSA::PrivateKey &GetPrivateKey(uint64_t id);
-    std::pair<RSA::PrivateKey *, RSA::PublicKey *> &operator[](uint64_t id);
+    int NewKey();
+    int Load(const char *pubKeyFile, const char *privKeyFile);
+    int Save(const char *pubKeyFile, const char *privKeyFile);
+    RSA::PublicKey &GetPublicKey();
+    RSA::PrivateKey &GetPrivateKey();
+    const byte *GetPublicKeyBin(size_t &size);
 
   private:
-    std::map<uint64_t, std::pair<RSA::PrivateKey *, RSA::PublicKey *>> keys;
+    RSA::PublicKey pkey;
+    RSA::PrivateKey prkey;
+    ByteQueue PublicKeyBin;
 };
 
 #endif // !RSAKeyManager_H

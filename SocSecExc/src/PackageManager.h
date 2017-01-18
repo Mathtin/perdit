@@ -69,6 +69,7 @@ class PackageManager {
     byte Buffer[PACKSIZE << 4];
     std::mutex mtx;
     std::condition_variable cv;
+    uint64_t PackagesRecieved;
     // Static members
     static void SocketReciever(LPVOID pm, Socket *s, size_t Recieved);
 };
@@ -102,6 +103,7 @@ class Package {
 
   private:
     byte UData[PACKSIZE];
+    uint64_t userid, pacid;
     uint32_t available;
     PackageType type;
 };

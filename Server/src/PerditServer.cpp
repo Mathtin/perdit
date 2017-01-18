@@ -1,137 +1,203 @@
-#include <iostream>
-#include <set>
-#include <vector>
-#include <thread>
-#include <cstdio>
-#include <cstring>
-#include <cstdint>
-#include "Socket.h"
-#include "RSAKeyManager.h"
-#include "PackageManager.h"
+#include "PerditServer.h"
 
-using namespace std;
-
-#define PUBSERVKEY "rsaserverpub.txt"
-#define PRIVSERVKEY "rsaserverpriv.txt"
-#define PUBUSERKEY "rsauserpub.txt"
-#define PRIVUSERKEY "rsauserpriv.txt"
-
-struct PreServer {
-    PreServer() : olds(0) {}
-    RSAKeyManager km;
-    PackageManager pm;
-    LPListeningSocket sock;
-    set<LPSocket> ss;
-    vector<LPSocket> olds;
-};
-
-typedef PreServer *LPPreServer;
-
-void Connected(LPVOID lp, LPSocket sock, LPSOCKADDR_IN local);
-
-void Disconnected(LPVOID lp, LPSocket sock, int error);
-
-int main(int argc, char *argv[]) {
-    PreServer pserv;
-    pserv.km.Load(PUBSERVKEY, PRIVSERVKEY, 0);
-    pserv.km.Load(PUBUSERKEY, NULL, 1);
-    cout << " [*] Starting Perdit Server" << endl;
-    pserv.sock = new ListeningSocket("6767");
-    pserv.sock->StartAccepting(&Connected, &pserv);
-    cout << " [*] Perdit Server Started" << endl;
-    auto handle = thread([&pserv]() {
-        char Buffer[PACKSIZE];
-        Package *p;
-        uint32_t lastOpSo = Socket::OpenedSockets();
-        while (true) {
-            if (lastOpSo != Socket::OpenedSockets()) {
-                lastOpSo = Socket::OpenedSockets();
-                cout << " [ ] Opened sockets: " << lastOpSo << endl;
-            }
-            pserv.pm.WaitForPackages();
-            for (auto i : pserv.olds) {
-                delete i;
-            }
-            pserv.olds.clear();
-            if (!pserv.pm.Recieving()) {
-                return;
-            }
-            p = pserv.pm.Pop();
-            int res1 = 0, res2 = 0;
-            PackageType ptype = p->Type();
-            if (ptype == SignedPackage) {
-                res1 = p->Verify(pserv.km.GetPublicKey(1));
-                res2 = p->Decrypt(pserv.km.GetPrivateKey(0));
-            } else if (ptype == EncryptedPackage) {
-                res2 = p->Decrypt(pserv.km.GetPrivateKey(0));
-            }
-            cout << " [ ] (" << p->UserID() << ')';
-            if (ptype == EncryptedPackage) {
-                cout << "-";
-            } else if (ptype == SignedPackage) {
-                cout << "#";
-            }
-            if (res1 || res2) {
-                cout << "Bad package! Passing.." << endl;
-                delete p;
-                continue;
-            }
-            p->Read((byte *)Buffer, PACKSIZE);
-            delete p;
-            Buffer[PACKSIZE - 1] = 0;
-            cout << '>' << Buffer << '<' << endl;
-        }
-    });
-    char Buffer[PACKSIZE];
-    Package *p;
-    int num;
-    LPSocket cl;
-    while (cin >> Buffer) {
-        if (strcmp(Buffer, "exit") == 0) {
-            pserv.pm.StopRecieve();
-            pserv.sock->StopAccepting();
-            break;
-        }
-        num = atoi(Buffer);
-        cin >> Buffer;
-        if (num == 0) {
-            continue;
-        }
-        cl = NULL;
-        for (auto i = pserv.ss.begin(); i != pserv.ss.end(); i++, num--) {
-            if (num == 1) {
-                cl = (*i);
-                break;
-            }
-        }
-        if (!cl) {
-            continue;
-        }
-        p = new Package(0, 0);
-        p->Write((byte *)Buffer, PACKDATASIZE);
-        p->Encrypt(pserv.km.GetPublicKey(1));
-        p->Sign(pserv.km.GetPrivateKey(0));
-        p->Send(cl);
-        delete p;
+PerditServer::PerditServer(const char *sPort, const char *PrivateKeyFile,
+                           const char *PublicKeyFile) {
+    PackagesSended = 0;
+    bActive = false;
+    sock = nullptr;
+    km.Load(PublicKeyFile, PrivateKeyFile);
+    sock = new ListeningSocket(sPort);
+    if (!sock->Listening()) {
+        return;
     }
-    handle.join();
-    delete pserv.sock;
+    sock->StartAccepting(&PerditServer::OnConnection, this);
+    if (!sock->Accepting()) {
+        return;
+    }
+    hPackageProcessRoutine = CreateThread(
+        NULL, 0, (LPTHREAD_START_ROUTINE)&PackageProcessRoutine, this, 0, NULL);
+    if (hPackageProcessRoutine == INVALID_HANDLE_VALUE) {
+        fprintf(stderr,
+                " [x] PackageProcessRoutine thread failed to create: %lu",
+                GetLastError());
+        return;
+    }
+    bActive = true;
+}
+
+PerditServer::~PerditServer() {
+    pm.StopRecieve();
+    if (bActive) {
+        WaitForSingleObject(hPackageProcessRoutine, INFINITE);
+        CloseHandle(hPackageProcessRoutine);
+        sock->StopAccepting();
+    }
+    while (oldusers.size()) {
+        delete oldusers.top();
+        oldusers.pop();
+    }
+    for (auto i : users) {
+        delete i.second;
+    }
+    delete sock;
+}
+
+void PerditServer::Stop() {
+    pm.StopRecieve();
+    if (bActive) {
+        WaitForSingleObject(hPackageProcessRoutine, INFINITE);
+        CloseHandle(hPackageProcessRoutine);
+        sock->StopAccepting();
+    }
+    while (oldusers.size()) {
+        delete oldusers.top();
+        oldusers.pop();
+    }
+    for (auto i : users) {
+        delete i.second;
+    }
+    users.clear();
+    sock->StopAccepting();
+    bActive = false;
+}
+
+std::map<uint64_t, LPPerditUser> &PerditServer::Users() {
+    return users;
+}
+
+bool PerditServer::Active() {
+    return bActive;
+}
+
+int PerditServer::Send(const char *data, size_t size, uint64_t uid,
+                       bool encrypt) {
+    auto u = users.find(uid);
+    if (u == users.end()) {
+        return 1;
+    }
+    LPPerditUser user = u->second;
+    Package p(1, PackagesSended);
+    p.Write((byte *)data, size);
+    if (encrypt) {
+        p.Encrypt(user->GetPublicKey());
+        p.Sign(km.GetPrivateKey());
+    }
+    user->Send(&p);
     return 0;
 }
 
-void Connected(LPVOID lp, LPSocket sock, LPSOCKADDR_IN local) {
-    LPPreServer pserv = (LPPreServer)lp;
-    struct in_addr addr = sock->Addr();
-    cout << " [!] Connected from: " << (uint)addr.S_un.S_un_b.s_b1 << '.'
-         << (uint)addr.S_un.S_un_b.s_b2 << '.' << (uint)addr.S_un.S_un_b.s_b3
-         << '.' << (uint)addr.S_un.S_un_b.s_b4 << endl;
-    cout << " [ ] Opened sockets: " << Socket::OpenedSockets() << endl;
-    pserv->ss.insert(sock);
-    pserv->pm.RecieveFrom(sock, &Disconnected, pserv);
+int PerditServer::Send(const char *data, size_t size, LPPerditUser user,
+                       bool encrypt) {
+    Package p(1, PackagesSended);
+    p.Write((byte *)data, size);
+    if (encrypt) {
+        p.Encrypt(user->GetPublicKey());
+        p.Sign(km.GetPrivateKey());
+    }
+    user->Send(&p);
+    return 0;
 }
 
-void Disconnected(LPVOID lp, LPSocket sock, int error) {
-    LPPreServer pserv = (LPPreServer)lp;
+DWORD WINAPI PerditServer::PackageProcessRoutine() {
+    byte Buffer[PACKSIZE];
+    Package *p;
+    LPPerditUser user;
+    while (true) {
+        pm.WaitForPackages();
+        while (oldusers.size()) {
+            delete oldusers.top();
+            oldusers.pop();
+        }
+        if (!pm.Recieving()) {
+            return 0;
+        }
+        p = pm.Pop();
+        auto u = users.find(p->UserID());
+        if (u == users.end()) {
+            delete p;
+            continue;
+        } else {
+            user = u->second;
+        }
+        int res1 = 0, res2 = 0;
+        PackageType ptype = p->Type();
+        if (ptype == SignedPackage) {
+            res1 = p->Verify(user->GetPublicKey());
+            res2 = p->Decrypt(km.GetPrivateKey());
+        } else if (ptype == EncryptedPackage) {
+            res2 = p->Decrypt(km.GetPrivateKey());
+        } else if (ptype == OpenPackage) {
+            p->Read(Buffer, PACKSIZE);
+            if (Buffer[0] == CTRLHandshake) {
+                uint64_t userID = ntohll(*(uint64_t *)(Buffer + 1));
+                if (user->ID() != userID) {
+                    printf(" [*] Handshake failed from %llu (dropping)\n",
+                           user->ID());
+                    delete users[user->ID()];
+                    users.erase(user->ID());
+                    delete p;
+                    continue;
+                }
+                ByteQueue bytes;
+                bytes.Put(Buffer + 2 + sizeof(uint64_t),
+                          Buffer[1 + sizeof(uint64_t)]);
+                bytes.MessageEnd();
+                RSA::PublicKey pubkey;
+                pubkey.Load(bytes);
+                user->SetPublicKey(pubkey);
+                printf(" [*] Handshake from %llu\n", user->ID());
+            }
+            delete p;
+            continue;
+        } else {
+            delete p;
+            continue;
+        }
+        printf(" [ ] (%llu)", p->UserID());
+        if (ptype == EncryptedPackage) {
+            printf("-");
+        } else if (ptype == SignedPackage) {
+            printf("#");
+        }
+        if (res1 || res2) {
+            printf("Bad package! Passing..\n");
+            delete p;
+            continue;
+        }
+        p->Read((byte *)Buffer, PACKSIZE);
+        delete p;
+        Buffer[PACKSIZE - 1] = 0;
+        printf(">%s<\n", Buffer);
+    }
+    return 0;
+}
+
+void PerditServer::OnConnection(LPVOID lp, LPSocket sock, LPSOCKADDR_IN local) {
+    LPPerditServer serv = (LPPerditServer)lp;
+    struct in_addr addr = sock->Addr();
+    printf(" [!] Connected from: %u.%u.%u.%u\n", (uint)addr.S_un.S_un_b.s_b1,
+           (uint)addr.S_un.S_un_b.s_b2, (uint)addr.S_un.S_un_b.s_b3,
+           (uint)addr.S_un.S_un_b.s_b4);
+    printf(" [ ] Opened sockets: %lu\n", Socket::OpenedSockets());
+    LPPerditUser user = new PerditUser(sock, sock->SocketID(), local);
+    serv->users.insert(std::make_pair(user->ID(), user));
+    serv->pm.RecieveFrom(sock, &PerditServer::OnDisconnection, serv);
+    Package p(1, serv->PackagesSended);
+    uint64_t userIDN = htonll(user->ID());
+    byte CTRL = CTRLHandshake, bkeysize;
+    size_t keysize;
+    const byte *binkey = serv->km.GetPublicKeyBin(keysize);
+    bkeysize = keysize;
+    p.Write(&CTRL, 1);
+    p.Write((byte *)&userIDN, sizeof(uint64_t));
+    p.Write(&bkeysize, 1);
+    p.Write(binkey, keysize);
+    user->Send(&p);
+    serv->PackagesSended++;
+}
+
+void PerditServer::OnDisconnection(LPVOID lp, LPSocket sock, int error) {
+    LPPerditServer serv = (LPPerditServer)lp;
     uint16_t ipaddr[4] = {
         sock->Addr().S_un.S_un_b.s_b1, sock->Addr().S_un.S_un_b.s_b2,
         sock->Addr().S_un.S_un_b.s_b3, sock->Addr().S_un.S_un_b.s_b4};
@@ -145,6 +211,7 @@ void Disconnected(LPVOID lp, LPSocket sock, int error) {
         printf(" [ ] Peer disconnected (%u.%u.%u.%u)\n", ipaddr[0], ipaddr[1],
                ipaddr[2], ipaddr[3]);
     }
-    pserv->olds.push_back(*pserv->ss.find(sock));
-    pserv->ss.erase(sock);
+    printf(" [ ] Opened sockets: %lu\n", Socket::OpenedSockets());
+    serv->oldusers.push(serv->users[sock->SocketID()]);
+    serv->users.erase(sock->SocketID());
 }
