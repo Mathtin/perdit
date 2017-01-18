@@ -31,6 +31,7 @@ int main(int argc, char *argv[]) {
         num = atoi(Buffer);
         cin >> Buffer;
         if (num == 0) {
+            cout << " [!] Wrong number: " << Buffer << endl;
             continue;
         }
         cl = NULL;
@@ -42,6 +43,7 @@ int main(int argc, char *argv[]) {
             }
         }
         if (!cl) {
+            cout << " [!] No such user: " << num << endl;
             continue;
         }
         serv.Send(Buffer, PACKDATASIZE, cl, true);
