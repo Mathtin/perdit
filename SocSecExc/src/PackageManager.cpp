@@ -125,9 +125,9 @@ uint32_t Package::Write(const byte *data, uint32_t size) {
         written += toWriteBlock;
         available -= toWriteBlock;
         toWrite -= toWriteBlock;
-        blockOffset += PACKBLOCKSIZE;
-        Block += PACKFIRSTBLOCKSIZE + PACKSALTSIZE;
     }
+    blockOffset += PACKBLOCKSIZE;
+    Block += PACKFIRSTBLOCKSIZE + PACKSALTSIZE;
     if (toWrite == 0) {
         return written;
         // Second block
@@ -142,9 +142,9 @@ uint32_t Package::Write(const byte *data, uint32_t size) {
         written += toWriteBlock;
         available -= toWriteBlock;
         toWrite -= toWriteBlock;
-        blockOffset += PACKBLOCKSIZE;
-        Block += RSAKeySizeBytes;
     }
+    blockOffset += PACKBLOCKSIZE;
+    Block += RSAKeySizeBytes;
     if (toWrite == 0) {
         return written;
         // Third block

@@ -26,6 +26,14 @@ RSA::PublicKey &PerditUser::GetPublicKey() {
     return key;
 }
 
+void PerditUser::SetNickname(const char *nick) {
+    memcpy(nickname, nick, MAXNAMELEN);
+}
+
+const char *PerditUser::GetNickname() {
+    return nickname;
+}
+
 void PerditUser::SetPublicKey(RSA::PublicKey &k) {
     key = k;
     if (status == UserAwaitHandshake) {

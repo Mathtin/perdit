@@ -11,6 +11,7 @@ using namespace CryptoPP;
 class PerditUser;
 typedef PerditUser *LPPerditUser;
 
+static const size_t MAXNAMELEN = 32;
 enum UserStatus { UserStatusUnknown = 1, UserAwaitHandshake, UserStatusOnline };
 
 class PerditUser {
@@ -24,12 +25,17 @@ class PerditUser {
     void SetPublicKey(RSA::PublicKey &k);
     RSA::PublicKey &GetPublicKey();
 
+    void SetNickname(const char *nick);
+    const char *GetNickname();
+
   private:
     uint64_t id;
     Socket *userSock;
     LPSOCKADDR_IN localaddr;
     UserStatus status;
     RSA::PublicKey key;
+    char nickname[MAXNAMELEN];
+    // Static Members
 };
 
 #endif // !PerditUser_H

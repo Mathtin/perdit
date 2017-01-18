@@ -8,6 +8,7 @@
 using namespace std;
 using namespace CryptoPP;
 enum { CTRLHandshake = 1 };
+static const size_t MAXNAMELEN = 32;
 
 #define PUBUSERKEY "rsauserpub.txt"
 #define PRIVUSERKEY "rsauserpriv.txt"
@@ -20,6 +21,7 @@ struct PreClient {
     RSA::PublicKey ServKey;
     bool HandShaked;
     uint64_t PackagesSended;
+    char NickName[MAXNAMELEN];
 };
 
 typedef PreClient *LPPreClient;
@@ -34,6 +36,10 @@ int main(int argc, char *argv[]) {
     pclient.HandShaked = false;
     pclient.PackagesSended = 0;
     pclient.km.Load(PUBUSERKEY, PRIVUSERKEY);
+    cout << "Type your nickname (MAX 31 CHARACTER):";
+    cin.get(pclient.NickName, MAXNAMELEN - 1);
+    cin.sync();
+    pclient.NickName[MAXNAMELEN - 1] = '\0';
     Package *p;
     cout << "Connecting..." << endl;
     const char *sIP;
@@ -45,8 +51,9 @@ int main(int argc, char *argv[]) {
     pclient.sock = new ConnectingSocket(sIP, "6767");
     while (!pclient.sock->Connected()) {
         cout << "Type anything to reconnect or \"exit\" to close client:";
-        cin >> Buffer;
-        if (strcmp(Buffer, "exit") == 0) {
+        cin.get(Buffer, PACKDATASIZE - 1);
+        cin.sync();
+        if (!cin || strcmp(Buffer, "exit") == 0) {
             pclient.sock->Disconnect();
             delete pclient.sock;
             return 0;
@@ -93,6 +100,7 @@ int main(int argc, char *argv[]) {
                     phand.Write((byte *)&userIDN, sizeof(uint64_t));
                     phand.Write(&bkeysize, 1);
                     phand.Write(binkey, keysize);
+                    phand.Write((byte *)pclient.NickName, MAXNAMELEN);
                     phand.Send(pclient.sock);
                     pclient.PackagesSended++;
                 }
@@ -120,11 +128,13 @@ int main(int argc, char *argv[]) {
     };
     auto handle = std::async(std::launch::async, PackageProcessRoutine);
     bool lostconn = false;
-    while (cin >> Buffer) {
+    while (cin) {
+        cin.get(Buffer, PACKDATASIZE - 1);
+        cin.sync();
         if (!pclient.sock->Connected()) {
             pclient.HandShaked = false;
             lostconn = true;
-            if (strcmp(Buffer, "exit") == 0) {
+            if (!cin || strcmp(Buffer, "exit") == 0) {
                 pclient.pm.StopRecieve();
                 pclient.sock->Disconnect();
                 delete pclient.sock;
@@ -134,8 +144,9 @@ int main(int argc, char *argv[]) {
         }
         while (!pclient.sock->Connected()) {
             cout << "Type anything to reconnect or \"exit\" to close client:";
-            cin >> Buffer;
-            if (strcmp(Buffer, "exit") == 0) {
+            cin.get(Buffer, PACKDATASIZE - 1);
+            cin.sync();
+            if (!cin || strcmp(Buffer, "exit") == 0) {
                 pclient.sock->Disconnect();
                 delete pclient.sock;
                 return 0;
@@ -146,9 +157,10 @@ int main(int argc, char *argv[]) {
             pclient.pm.RecieveFrom(pclient.sock, &Disconnected, &pclient);
             lostconn = false;
             cout << "Connected" << endl;
-            cin >> Buffer;
+            cin.get(Buffer, PACKDATASIZE - 1);
+            cin.sync();
         }
-        if (strcmp(Buffer, "exit") == 0) {
+        if (!cin || strcmp(Buffer, "exit") == 0) {
             pclient.pm.StopRecieve();
             pclient.sock->Disconnect();
             break;

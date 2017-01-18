@@ -145,7 +145,10 @@ DWORD WINAPI PerditServer::PackageProcessRoutine() {
                 RSA::PublicKey pubkey;
                 pubkey.Load(bytes);
                 user->SetPublicKey(pubkey);
-                printf(" [*] Handshake from %llu\n", user->ID());
+                size_t nicknameoff =
+                    2 + sizeof(uint64_t) + Buffer[1 + sizeof(uint64_t)];
+                user->SetNickname((char *)Buffer + nicknameoff);
+                printf(" [*] Handshake from %s\n", user->GetNickname());
             }
             delete p;
             continue;
@@ -153,7 +156,7 @@ DWORD WINAPI PerditServer::PackageProcessRoutine() {
             delete p;
             continue;
         }
-        printf(" [ ] (%llu)", p->UserID());
+        printf(" [ ] (%s)", user->GetNickname());
         if (ptype == EncryptedPackage) {
             printf("-");
         } else if (ptype == SignedPackage) {
