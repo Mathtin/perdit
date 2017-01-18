@@ -40,6 +40,7 @@ class Socket {
     ~Socket();
 
     bool Opened();
+    bool Recieving();
     uint64_t SocketID();
     uint64_t SetSocketID(uint64_t sid);
     int StartRecieving(RecvSocketFunc f, LPVOID recvarg, DiscSocketFunc df,

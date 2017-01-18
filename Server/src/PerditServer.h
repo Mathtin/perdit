@@ -13,7 +13,13 @@ using namespace CryptoPP;
 class PerditServer;
 typedef PerditServer *LPPerditServer;
 
-enum { CTRLHandshake = 1 };
+enum {
+    CTRLHandshake = 1,
+    CTRLNewMessage,
+    CTRLMessageAccepted,
+    CTRLContactList,
+    CTRLContactError
+};
 
 class PerditServer {
   public:

@@ -125,6 +125,13 @@ bool Socket::Opened() {
     return bOpened;
 }
 
+bool Socket::Recieving() {
+    if (!bOpened) {
+        bRecieving = false;
+    }
+    return bRecieving;
+}
+
 uint64_t Socket::SocketID() {
     return id;
 }
@@ -194,6 +201,7 @@ DWORD WINAPI Socket::RecievingFunc() {
         if (bRes == FALSE) {
             // Hard disconnect
             bOpened = false;
+            bRecieving = false;
             closesocket(sock);
             dwlOpenedSockets--;
             WSACloseEvent(aw[1]);
@@ -205,6 +213,7 @@ DWORD WINAPI Socket::RecievingFunc() {
         if (BytesTransferred == 0) {
             // Usual disconnect
             bOpened = false;
+            bRecieving = false;
             closesocket(sock);
             dwlOpenedSockets--;
             WSACloseEvent(aw[1]);

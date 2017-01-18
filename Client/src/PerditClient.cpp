@@ -1,190 +1,172 @@
-#include <iostream>
-#include <cstring>
-#include <future>
-#include <Socket.h>
-#include <RSAKeyManager.h>
-#include <PackageManager.h>
+#include "PerditClient.h"
 
-using namespace std;
-using namespace CryptoPP;
-enum { CTRLHandshake = 1 };
-static const size_t MAXNAMELEN = 32;
-
-#define PUBUSERKEY "rsauserpub.txt"
-#define PRIVUSERKEY "rsauserpriv.txt"
-
-struct PreClient {
-    RSAKeyManager km;
-    PackageManager pm;
-    LPConnectingSocket sock;
-    uint64_t id;
-    RSA::PublicKey ServKey;
-    bool HandShaked;
-    uint64_t PackagesSended;
-    char NickName[MAXNAMELEN];
-};
-
-typedef PreClient *LPPreClient;
-
-void Recieved(LPVOID lp, LPPackageManager pm);
-
-void Disconnected(LPVOID lp, LPSocket sock, int error);
-
-int main(int argc, char *argv[]) {
-    char Buffer[PACKDATASIZE];
-    PreClient pclient;
-    pclient.HandShaked = false;
-    pclient.PackagesSended = 0;
-    pclient.km.Load(PUBUSERKEY, PRIVUSERKEY);
-    cout << "Type your nickname (MAX 31 CHARACTER):";
-    cin.get(pclient.NickName, MAXNAMELEN - 1);
-    cin.sync();
-    pclient.NickName[MAXNAMELEN - 1] = '\0';
-    Package *p;
-    cout << "Connecting..." << endl;
-    const char *sIP;
-    if (argc > 1) {
-        sIP = argv[1];
-    } else {
-        sIP = "127.0.0.1";
+PerditClient::PerditClient(const char *sIP, const char *sPort,
+                           const char *PrivateKeyFile,
+                           const char *PublicKeyFile, const char *nick) {
+    HandShaked = false;
+    PackagesSended = 0;
+    km.Load(PublicKeyFile, PrivateKeyFile);
+    memcpy(NickName, nick, MAXNAMELEN);
+    NickName[MAXNAMELEN - 1] = '\0';
+    sock = new ConnectingSocket(sIP, sPort);
+    if (!sock->Connected()) {
+        return;
     }
-    pclient.sock = new ConnectingSocket(sIP, "6767");
-    while (!pclient.sock->Connected()) {
-        cout << "Type anything to reconnect or \"exit\" to close client:";
-        cin.get(Buffer, PACKDATASIZE - 1);
-        cin.sync();
-        if (!cin || strcmp(Buffer, "exit") == 0) {
-            pclient.sock->Disconnect();
-            delete pclient.sock;
-            return 0;
-        }
-        pclient.sock->Connect();
+    hPackageProcessRoutine = CreateThread(
+        NULL, 0, (LPTHREAD_START_ROUTINE)&PackageProcessRoutine, this, 0, NULL);
+    if (hPackageProcessRoutine == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "PackageProcessRoutine thread failed to create: %lu",
+                GetLastError());
+        return;
     }
-    cout << "Connected" << endl;
-    pclient.pm.RecieveFrom(pclient.sock, &Disconnected, &pclient);
-    auto PackageProcessRoutine = [&pclient]() {
-        byte Buffer[PACKDATASIZE];
-        Package *p;
-        while (true) {
-            pclient.pm.WaitForPackages();
-            if (!pclient.pm.Recieving()) {
-                return;
-            }
-            p = pclient.pm.Pop();
-            int res1 = 0, res2 = 0;
-            PackageType ptype = p->Type();
-            if (ptype == SignedPackage) {
-                res1 = p->Verify(pclient.ServKey);
-                res2 = p->Decrypt(pclient.km.GetPrivateKey());
-            } else if (ptype == EncryptedPackage) {
-                res2 = p->Decrypt(pclient.km.GetPrivateKey());
-            } else if (ptype == OpenPackage) {
-                p->Read((byte *)Buffer, PACKDATASIZE);
-                if (Buffer[0] == CTRLHandshake) {
-                    uint64_t userID = ntohll(*(uint64_t *)(Buffer + 1));
-                    pclient.id = userID;
-                    ByteQueue bytes;
-                    bytes.Put(Buffer + 2 + sizeof(uint64_t),
-                              (size_t)Buffer[1 + sizeof(uint64_t)]);
-                    bytes.MessageEnd();
-                    pclient.ServKey.Load(bytes);
-                    pclient.HandShaked = true;
-                    printf("Handshake from server\n");
-                    Package phand(1, pclient.PackagesSended);
-                    uint64_t userIDN = htonll(userID);
-                    byte CTRL = CTRLHandshake, bkeysize;
-                    size_t keysize;
-                    const byte *binkey = pclient.km.GetPublicKeyBin(keysize);
-                    bkeysize = keysize;
-                    phand.Write(&CTRL, 1);
-                    phand.Write((byte *)&userIDN, sizeof(uint64_t));
-                    phand.Write(&bkeysize, 1);
-                    phand.Write(binkey, keysize);
-                    phand.Write((byte *)pclient.NickName, MAXNAMELEN);
-                    phand.Send(pclient.sock);
-                    pclient.PackagesSended++;
-                }
-                delete p;
-                continue;
-            } else {
-                delete p;
-                continue;
-            }
-            if (ptype == EncryptedPackage) {
-                cout << "(encrypted)";
-            } else if (ptype == SignedPackage) {
-                cout << "(signed)";
-            }
-            if (res1 || res2) {
-                cout << "Bad package! Passing.." << endl;
-                delete p;
-                continue;
-            }
-            p->Read(Buffer, PACKSIZE);
-            delete p;
-            Buffer[PACKSIZE - 1] = 0;
-            cout << '>' << Buffer << '<' << endl;
-        }
-    };
-    auto handle = std::async(std::launch::async, PackageProcessRoutine);
-    bool lostconn = false;
-    while (cin) {
-        cin.get(Buffer, PACKDATASIZE - 1);
-        cin.sync();
-        if (!pclient.sock->Connected()) {
-            pclient.HandShaked = false;
-            lostconn = true;
-            if (!cin || strcmp(Buffer, "exit") == 0) {
-                pclient.pm.StopRecieve();
-                pclient.sock->Disconnect();
-                delete pclient.sock;
-                return 0;
-            }
-            pclient.sock->Connect();
-        }
-        while (!pclient.sock->Connected()) {
-            cout << "Type anything to reconnect or \"exit\" to close client:";
-            cin.get(Buffer, PACKDATASIZE - 1);
-            cin.sync();
-            if (!cin || strcmp(Buffer, "exit") == 0) {
-                pclient.sock->Disconnect();
-                delete pclient.sock;
-                return 0;
-            }
-            pclient.sock->Connect();
-        }
-        if (lostconn) {
-            pclient.pm.RecieveFrom(pclient.sock, &Disconnected, &pclient);
-            lostconn = false;
-            cout << "Connected" << endl;
-            cin.get(Buffer, PACKDATASIZE - 1);
-            cin.sync();
-        }
-        if (!cin || strcmp(Buffer, "exit") == 0) {
-            pclient.pm.StopRecieve();
-            pclient.sock->Disconnect();
-            break;
-        }
-        if (!pclient.HandShaked) {
-            cerr << "Waiting for handshake" << endl;
-            continue;
-        }
-        p = new Package(pclient.id, pclient.PackagesSended);
-        p->Write((byte *)Buffer, PACKDATASIZE);
-        p->Encrypt(pclient.ServKey);
-        p->Sign(pclient.km.GetPrivateKey());
-        p->Send(pclient.sock);
-        pclient.PackagesSended++;
-        delete p;
-    }
-    handle.wait();
-    delete pclient.sock;
-    return 0;
+    pm.RecieveFrom(sock, &PerditClient::OnDisconnection, this);
 }
 
-void Recieved(LPVOID lp, LPPackageManager pm) {}
+PerditClient::~PerditClient() {
+    pm.StopRecieve();
+    if (Active()) {
+        WaitForSingleObject(hPackageProcessRoutine, INFINITE);
+        CloseHandle(hPackageProcessRoutine);
+    }
+    sock->Disconnect();
+    delete sock;
+}
 
-void Disconnected(LPVOID lp, LPSocket sock, int error) {
+uint64_t PerditClient::ID() {
+    return id;
+}
+
+bool PerditClient::Active() {
+    return HandShaked;
+}
+
+bool PerditClient::Connected() {
+    if (!sock->Connected()) {
+        HandShaked = false;
+    }
+    return sock->Connected();
+}
+
+void PerditClient::Connect() {
+    sock->Connect();
+    if (!Connected()) {
+        return;
+    }
+    if (!sock->Recieving()) {
+        pm.RecieveFrom(sock, &PerditClient::OnDisconnection, this);
+        hPackageProcessRoutine = CreateThread(
+            NULL, 0, (LPTHREAD_START_ROUTINE)&PackageProcessRoutine, this, 0,
+            NULL);
+        if (hPackageProcessRoutine == INVALID_HANDLE_VALUE) {
+            fprintf(stderr,
+                    "PackageProcessRoutine thread failed to create: %lu",
+                    GetLastError());
+            return;
+        }
+    }
+}
+
+void PerditClient::Disconnect() {
+    pm.StopRecieve();
+    if (Active()) {
+        WaitForSingleObject(hPackageProcessRoutine, INFINITE);
+        CloseHandle(hPackageProcessRoutine);
+    }
+    sock->Disconnect();
+    HandShaked = false;
+}
+
+void PerditClient::SetNickname(const char *nick) {
+    memcpy(NickName, nick, MAXNAMELEN);
+    NickName[MAXNAMELEN - 1] = '\0';
+}
+
+const char *PerditClient::GetNickname() {
+    return NickName;
+}
+
+void PerditClient::Send(const byte *data, size_t size) {
+    if (!Active()) {
+        return;
+    }
+    Package p(id, PackagesSended);
+    p.Write(data, size);
+    p.Encrypt(ServKey);
+    p.Sign(km.GetPrivateKey());
+    p.Send(sock);
+    PackagesSended++;
+}
+
+void PerditClient::SendHandshake(uint64_t userIDN) {
+    Package phand(1, PackagesSended);
+    byte CTRL = CTRLHandshake, bkeysize;
+    size_t keysize;
+    const byte *binkey = km.GetPublicKeyBin(keysize);
+    bkeysize = keysize;
+    phand.Write(&CTRL, 1);
+    phand.Write((byte *)&userIDN, sizeof(uint64_t));
+    phand.Write(&bkeysize, 1);
+    phand.Write(binkey, keysize);
+    phand.Write((byte *)NickName, MAXNAMELEN);
+    phand.Send(sock);
+}
+
+DWORD WINAPI PerditClient::PackageProcessRoutine() {
+    byte Buffer[PACKDATASIZE];
+    Package *p;
+    while (true) {
+        pm.WaitForPackages();
+        if (!pm.Recieving()) {
+            return 0;
+        }
+        p = pm.Pop();
+        int res1 = 0, res2 = 0;
+        PackageType ptype = p->Type();
+        if (ptype == SignedPackage) {
+            res1 = p->Verify(ServKey);
+            res2 = p->Decrypt(km.GetPrivateKey());
+        } else if (ptype == EncryptedPackage) {
+            res2 = p->Decrypt(km.GetPrivateKey());
+        } else if (ptype == OpenPackage) {
+            p->Read((byte *)Buffer, PACKDATASIZE);
+            if (Buffer[0] == CTRLHandshake) {
+                uint64_t userID = ntohll(*(uint64_t *)(Buffer + 1));
+                id = userID;
+                ByteQueue bytes;
+                bytes.Put(Buffer + 2 + sizeof(uint64_t),
+                          (size_t)Buffer[1 + sizeof(uint64_t)]);
+                bytes.MessageEnd();
+                ServKey.Load(bytes);
+                HandShaked = true;
+                uint64_t userIDN = htonll(userID);
+                SendHandshake(userIDN);
+                PackagesSended++;
+            }
+            delete p;
+            continue;
+        } else {
+            delete p;
+            continue;
+        }
+        if (res1 || res2) {
+            printf("Bad package! Passing..\n");
+            delete p;
+            continue;
+        }
+        p->Read(Buffer, PACKSIZE);
+        delete p;
+        Buffer[PACKSIZE - 1] = 0;
+        printf(">%s<\n", Buffer);
+        continue;
+    }
+}
+
+void PerditClient::OnDisconnection(LPVOID lp, LPSocket sock, int error) {
+    LPPerditClient client = (LPPerditClient)lp;
+    client->pm.StopRecieve();
+    WaitForSingleObject(client->hPackageProcessRoutine, INFINITE);
+    CloseHandle(client->hPackageProcessRoutine);
+    client->HandShaked = false;
     uint16_t ipaddr[4] = {
         sock->Addr().S_un.S_un_b.s_b1, sock->Addr().S_un.S_un_b.s_b2,
         sock->Addr().S_un.S_un_b.s_b3, sock->Addr().S_un.S_un_b.s_b4};

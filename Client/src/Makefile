@@ -6,8 +6,8 @@ OBJDIR    = ../obj/Debug/
 RESDIR    = ../res/
 OUTPUTDIR = ../../Debug/
 SSESRCDIR = ../../SocSecExc/src/
-OBJ       = $(OBJDIR)PerditClient.o $(RESDIR)PerditClient.res
-LINKOBJ   = $(OBJDIR)PerditClient.o $(RESDIR)PerditClient.res -lSocSecExc -lcryptopp
+OBJ       = $(OBJDIR)main.o $(OBJDIR)PerditClient.o $(RESDIR)PerditClient.res
+LINKOBJ   = $(OBJDIR)main.o $(OBJDIR)PerditClient.o $(RESDIR)PerditClient.res -lSocSecExc -lcryptopp
 LIBS      = -L"$(OUTPUTDIR)" -L"$(SSESRCDIR)crypto++"
 INCS      = -I"$(SSESRCDIR)" -I"$(SSESRCDIR)crypto++"
 CXXINCS   = -I"$(SSESRCDIR)" -I"$(SSESRCDIR)crypto++"
@@ -27,7 +27,10 @@ clean:
 $(RESDIR)PerditClient.res: PerditClient.rc
 	windres $< -O coff -o $@
 
-$(OBJDIR)PerditClient.o: PerditClient.cpp $(SSESRCDIR)Socket.h $(SSESRCDIR)RSAKeyManager.h $(SSESRCDIR)PackageManager.h
+$(OBJDIR)PerditClient.o: PerditClient.cpp  PerditClient.h $(SSESRCDIR)Socket.h $(SSESRCDIR)RSAKeyManager.h $(SSESRCDIR)PackageManager.h
+	$(CPP) -c $< -o $@ $(CXXFLAGS)
+
+$(OBJDIR)main.o: main.cpp
 	$(CPP) -c $< -o $@ $(CXXFLAGS)
 
 $(OUTPUTDIR)$(BIN): $(OBJ)

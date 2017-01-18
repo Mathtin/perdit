@@ -87,6 +87,8 @@ void PackageManager::SocketReciever(LPVOID lp, Socket *s, size_t Recieved) {
 }
 
 int PackageManager::RecieveFrom(LPSocket sock, DiscSocketFunc df, LPVOID arg) {
+    std::lock_guard<std::mutex> lock(mtx);
+    bStoppedRecv = false;
     return sock->StartRecieving(&PackageManager::SocketReciever, this, df, arg,
                                 (char *)Buffer, BufferSize);
 }
@@ -97,6 +99,9 @@ byte *PackageManager::GetBuffer() {
 }
 
 Package::Package(uint64_t uid, uint64_t paid) : userid(uid), pacid(paid) {
+    dbegin = 0;
+    dend = 0;
+    placed = false;
     available = PACKDATASIZE;
     type = OpenPackage;
     *((uint64_t *)(UData + 1)) = htonll(uid);
@@ -104,131 +109,87 @@ Package::Package(uint64_t uid, uint64_t paid) : userid(uid), pacid(paid) {
 }
 
 uint32_t Package::Write(const byte *data, uint32_t size) {
-    uint32_t used = PACKDATASIZE - available;
-    if (!available || type == InvalidPackage || type == EncryptedPackage) {
+    if (!available || type == InvalidPackage || type == EncryptedPackage ||
+        type == SignedPackage) {
         return 0;
     }
-    uint32_t toWrite = (available > size ? size : available), toWriteBlock,
-             blockOffset = PACKFIRSTBLOCKSIZE, written = 0;
-    if (toWrite == 0) {
-        return written;
+    placed = false;
+    size_t i;
+    for (i = 0; size && available; i++, size--, available--) {
+        Data[dend] = data[i];
+        dend = (dend + 1) % PACKDATASIZE;
     }
-    // First block
-    byte *Block = UData + 17;
-    if (used < blockOffset) {
-        toWriteBlock = blockOffset - used;
-        if (toWriteBlock > toWrite) {
-            toWriteBlock = toWrite;
-        }
-        memcpy(Block + used, data + written, toWriteBlock);
-        used += toWriteBlock;
-        written += toWriteBlock;
-        available -= toWriteBlock;
-        toWrite -= toWriteBlock;
-    }
-    blockOffset += PACKBLOCKSIZE;
-    Block += PACKFIRSTBLOCKSIZE + PACKSALTSIZE;
-    if (toWrite == 0) {
-        return written;
-        // Second block
-    } else if (used < blockOffset) {
-        toWriteBlock = blockOffset - used;
-        if (toWriteBlock > toWrite) {
-            toWriteBlock = toWrite;
-        }
-        memcpy(Block + (used - PACKFIRSTBLOCKSIZE), data + written,
-               toWriteBlock);
-        used += toWriteBlock;
-        written += toWriteBlock;
-        available -= toWriteBlock;
-        toWrite -= toWriteBlock;
-    }
-    blockOffset += PACKBLOCKSIZE;
-    Block += RSAKeySizeBytes;
-    if (toWrite == 0) {
-        return written;
-        // Third block
-    } else if (used < blockOffset) {
-        toWriteBlock = blockOffset - used;
-        if (toWriteBlock > toWrite) {
-            toWriteBlock = toWrite;
-        }
-        memcpy(Block + (used - PACKFIRSTBLOCKSIZE - PACKBLOCKSIZE),
-               data + written, toWriteBlock);
-        used += toWriteBlock;
-        written += toWriteBlock;
-        available -= toWriteBlock;
-        toWrite -= toWriteBlock;
-    }
-    return written;
+    return i;
 }
 
 uint32_t Package::Read(byte *data, uint32_t size) {
-    uint32_t used = PACKDATASIZE - available;
-    if (!used || type == InvalidPackage || type == EncryptedPackage) {
+    if (available == PACKDATASIZE || type == InvalidPackage ||
+        type == EncryptedPackage || type == SignedPackage) {
         return 0;
     }
-    uint32_t toWrite = (used > size ? size : used), toWriteBlock,
-             blockOffset = PACKFIRSTBLOCKSIZE, written = 0,
-             Offset = used - toWrite;
-    if (toWrite == 0) {
-        return written;
+    size_t i;
+    for (i = 0; size && available != PACKDATASIZE; i++, size--, available++) {
+        data[i] = Data[dbegin];
+        dbegin = (dbegin + 1) % PACKDATASIZE;
     }
+    return i;
+}
+
+static void PlaceData(byte *Data, byte *UData, size_t dbegin) {
+    byte *UBlock = UData + 17;
     // First block
-    byte *Block = UData + 17;
-    if (Offset < blockOffset) {
-        toWriteBlock = blockOffset - Offset;
-        if (toWriteBlock > toWrite) {
-            toWriteBlock = toWrite;
-        }
-        memcpy(data + written, Block, toWriteBlock);
-        used -= toWriteBlock;
-        written += toWriteBlock;
-        available += toWriteBlock;
-        toWrite -= toWriteBlock;
-        Offset = blockOffset;
-        blockOffset += PACKBLOCKSIZE;
-        Block += PACKFIRSTBLOCKSIZE + PACKSALTSIZE;
+    for (size_t i = 0; i < PACKFIRSTBLOCKSIZE; i++) {
+        UBlock[i] = Data[dbegin];
+        dbegin = (dbegin + 1) % PACKDATASIZE;
     }
-    if (toWrite == 0) {
-        return written;
-        // Second block
-    } else if (Offset < blockOffset) {
-        toWriteBlock = blockOffset - Offset;
-        if (toWriteBlock > toWrite) {
-            toWriteBlock = toWrite;
-        }
-        memcpy(data + written, Block, toWriteBlock);
-        used -= toWriteBlock;
-        written += toWriteBlock;
-        available += toWriteBlock;
-        toWrite -= toWriteBlock;
-        Offset = blockOffset;
-        blockOffset += PACKBLOCKSIZE;
-        Block += RSAKeySizeBytes;
+    UBlock += PACKFIRSTBLOCKSIZE + PACKSALTSIZE;
+    // Second block
+    for (size_t i = 0; i < PACKBLOCKSIZE; i++) {
+        UBlock[i] = Data[dbegin];
+        dbegin = (dbegin + 1) % PACKDATASIZE;
     }
-    if (toWrite == 0) {
-        return written;
-        // Third block
-    } else if (Offset < blockOffset) {
-        toWriteBlock = blockOffset - Offset;
-        if (toWriteBlock > toWrite) {
-            toWriteBlock = toWrite;
-        }
-        memcpy(data + written, Block, toWriteBlock);
-        used -= toWriteBlock;
-        written += toWriteBlock;
-        available += toWriteBlock;
-        toWrite -= toWriteBlock;
+    UBlock += RSAKeySizeBytes;
+    // Third block
+    for (size_t i = 0; i < PACKBLOCKSIZE; i++) {
+        UBlock[i] = Data[dbegin];
+        dbegin = (dbegin + 1) % PACKDATASIZE;
     }
-    return written;
+}
+
+static void BackPlaceData(byte *Data, byte *UData) {
+    byte *UBlock = UData + 17;
+    size_t dbegin = 0;
+    // First block
+    for (size_t i = 0; i < PACKFIRSTBLOCKSIZE; i++) {
+        Data[dbegin] = UBlock[i];
+        dbegin = (dbegin + 1) % PACKDATASIZE;
+    }
+    UBlock += PACKFIRSTBLOCKSIZE + PACKSALTSIZE;
+    // Second block
+    for (size_t i = 0; i < PACKBLOCKSIZE; i++) {
+        Data[dbegin] = UBlock[i];
+        dbegin = (dbegin + 1) % PACKDATASIZE;
+    }
+    UBlock += RSAKeySizeBytes;
+    // Third block
+    for (size_t i = 0; i < PACKBLOCKSIZE; i++) {
+        Data[dbegin] = UBlock[i];
+        dbegin = (dbegin + 1) % PACKDATASIZE;
+    }
 }
 
 void Package::ClearData() {
     available = PACKDATASIZE;
+    dbegin = dend = 0;
+    placed = false;
+    type = OpenPackage;
 }
 
 void Package::Send(Socket *sock) {
+    if (type == OpenPackage && !placed) {
+        PlaceData(Data, UData, dbegin);
+        placed = true;
+    }
     UData[0] = 0;
     if (type == SignedPackage) {
         UData[0] |= PACKSIGNED | PACKENCRYPTED;
@@ -245,8 +206,16 @@ uint32_t Package::RawRewrite(const byte *data, uint32_t size, bool Signed,
     available = 0;
     if (Signed) {
         type = SignedPackage;
+        placed = false;
     } else if (Encrypted) {
         type = EncryptedPackage;
+        placed = false;
+    } else {
+        type = OpenPackage;
+        BackPlaceData(Data, UData);
+        dend = 0;
+        dbegin = 0;
+        placed = true;
     }
     return toWrite;
 }
@@ -278,6 +247,10 @@ int Package::Encrypt(RSA::PublicKey key) {
         return ErrorPackageInvalid;
     } else if (type == EncryptedPackage) {
         return ErrorPackageEncrypted;
+    }
+    if (!placed) {
+        PlaceData(Data, UData, dbegin);
+        placed = true;
     }
     AutoSeededRandomPool rng;
     RSAES_PKCS1v15_Encryptor encryptor(key);
@@ -320,6 +293,10 @@ int Package::Decrypt(RSA::PrivateKey key) {
     memcpy(tmp, Block, RSAKeySizeBytes);
     decryptor.Decrypt(rng, tmp, RSAKeySizeBytes, Block);
     type = OpenPackage;
+    BackPlaceData(Data, UData);
+    dend = 0;
+    dbegin = 0;
+    placed = true;
     return PackageDecrypted;
 }
 

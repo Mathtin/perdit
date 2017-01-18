@@ -76,6 +76,9 @@ int PerditServer::Send(const char *data, size_t size, uint64_t uid,
         return 1;
     }
     LPPerditUser user = u->second;
+    if (user->Status() == UserAwaitHandshake || user->Status() == UserStatusUnknown) {
+        return 0;
+    }
     Package p(1, PackagesSended);
     p.Write((byte *)data, size);
     if (encrypt) {
@@ -88,6 +91,9 @@ int PerditServer::Send(const char *data, size_t size, uint64_t uid,
 
 int PerditServer::Send(const char *data, size_t size, LPPerditUser user,
                        bool encrypt) {
+    if (user->Status() == UserAwaitHandshake || user->Status() == UserStatusUnknown) {
+        return 0;
+    }
     Package p(1, PackagesSended);
     p.Write((byte *)data, size);
     if (encrypt) {

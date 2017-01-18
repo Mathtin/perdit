@@ -103,6 +103,9 @@ class Package {
 
   private:
     byte UData[PACKSIZE];
+    byte Data[PACKDATASIZE];
+    bool placed;
+    size_t dbegin, dend;
     uint64_t userid, pacid;
     uint32_t available;
     PackageType type;
