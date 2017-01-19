@@ -3,6 +3,7 @@
 PerditClient::PerditClient(const char *sIP, const char *sPort,
                            const char *PrivateKeyFile,
                            const char *PublicKeyFile, const char *nick) {
+    startedRecievingContactsList = false;
     HandShaked = false;
     PackagesSended = 0;
     km.Load(PublicKeyFile, PrivateKeyFile);
@@ -23,6 +24,9 @@ PerditClient::PerditClient(const char *sIP, const char *sPort,
 }
 
 PerditClient::~PerditClient() {
+    for (auto i : ContactList) {
+        delete i;
+    }
     pm.StopRecieve();
     if (Active()) {
         WaitForSingleObject(hPackageProcessRoutine, INFINITE);
@@ -85,6 +89,10 @@ const char *PerditClient::GetNickname() {
     return NickName;
 }
 
+const std::vector<Contact *> &PerditClient::GetContactList() {
+    return ContactList;
+}
+
 void PerditClient::Send(const byte *data, size_t size) {
     if (!Active()) {
         return;
@@ -109,6 +117,64 @@ void PerditClient::SendHandshake(uint64_t userIDN) {
     phand.Write(binkey, keysize);
     phand.Write((byte *)NickName, MAXNAMELEN);
     phand.Send(sock);
+}
+
+void PerditClient::AskForContactList() {
+    Package phand(1, PackagesSended);
+    byte CTRL = CTRLContactList;
+    phand.Write(&CTRL, 1);
+    phand.Encrypt(ServKey);
+    phand.Sign(km.GetPrivateKey());
+    phand.Send(sock);
+    PackagesSended++;
+}
+
+const char *PerditClient::NickNameByUID(uint64_t uid) {
+    for (auto i : ContactList) {
+        if (i->UserID == uid) {
+            return i->Nickname;
+        }
+    }
+    return nullptr;
+}
+
+uint64_t PerditClient::UIDByNickname(const char *nick) {
+    size_t j;
+    for (auto i : ContactList) {
+        for (j = 0; j < MAXNAMELEN; j++) {
+            if (i->Nickname[j] != nick[j]) {
+                break;
+            } else if (!nick[j]) {
+                return i->UserID;
+            }
+        }
+        if (j == MAXNAMELEN) {
+            return i->UserID;
+        }
+    }
+    return 0;
+}
+
+int PerditClient::SendMessage(const char *msg, size_t size, const char *nick) {
+    if (!HandShaked) {
+        return 1;
+    }
+    uint64_t uid = htonll(UIDByNickname(nick));
+    if (!uid) {
+        return 1;
+    }
+    Package p(id, PackagesSended);
+    byte ctrl = CTRLNewMessage;
+    p.Write(&ctrl, 1);
+    p.Write((byte *)&uid, 8);
+    ctrl = size;
+    p.Write(&ctrl, 1);
+    p.Write((byte *)msg, ctrl);
+    p.Encrypt(ServKey);
+    p.Sign(km.GetPrivateKey());
+    p.Send(sock);
+    PackagesSended++;
+    return 0;
 }
 
 DWORD WINAPI PerditClient::PackageProcessRoutine() {
@@ -153,11 +219,78 @@ DWORD WINAPI PerditClient::PackageProcessRoutine() {
             delete p;
             continue;
         }
-        p->Read(Buffer, PACKSIZE);
+        p->Read(Buffer, 1);
+        size_t parts = 1;
+        if (Buffer[0] == CTRLSeveralPackages) {
+            p->Read(Buffer, 1);
+            parts = Buffer[0];
+            p->Read(Buffer, 1);
+        }
+        for (size_t i = 0; i < parts; i++) {
+            switch (Buffer[0]) {
+            case CTRLNewMessage: {
+                p->Read(Buffer, 8);
+                uint64_t from = ntohll(*(uint64_t *)Buffer);
+                auto nick = (from ? NickNameByUID(from) : "Server");
+                p->Read(Buffer, 1);
+                size_t msize = Buffer[0];
+                p->Read(Buffer, msize);
+                Buffer[msize] = '\0';
+                if (!nick) {
+                    AskForContactList();
+                    printf("[?]:%s\n", Buffer);
+                }
+                printf("%s:%s\n", nick, Buffer);
+                break;
+            }
+            case CTRLMessageAccepted: {
+                p->Read(Buffer, 8);
+                uint64_t which = ntohll(*(uint64_t *)Buffer);
+                // WHICH???????
+                printf("Message Accepted [%llu]\n", which);
+                break;
+            }
+            case CTRLContactError: {
+                p->Read(Buffer, 8);
+                uint64_t from = ntohll(*(uint64_t *)Buffer);
+                auto nick = NickNameByUID(from);
+                if (!nick) {
+                    AskForContactList();
+                    printf("Error: no such user. Disconnected?\n");
+                }
+                printf("Error: no such user: %s. Disconnected?\n", nick);
+                AskForContactList();
+                break;
+            }
+            case CTRLContactList: {
+                if (!startedRecievingContactsList) {
+                    for (auto c : ContactList) {
+                        delete c;
+                    }
+                    ContactList.clear();
+                    startedRecievingContactsList = true;
+                }
+                p->Read(Buffer, 1);
+                uint64_t amount = Buffer[0], id;
+                for (size_t c = 0; c < amount; c++) {
+                    p->Read(Buffer, 8);
+                    id = ntohll(*(uint64_t *)Buffer);
+                    p->Read(Buffer, MAXNAMELEN);
+                    ContactList.push_back(new Contact((char *)Buffer, id));
+                }
+                break;
+            }
+            case CTRLContactListEnd: {
+                startedRecievingContactsList = false;
+                break;
+            }
+            default:
+                i = parts;
+                break;
+            }
+            p->Read(Buffer, 1);
+        }
         delete p;
-        Buffer[PACKSIZE - 1] = 0;
-        printf(">%s<\n", Buffer);
-        continue;
     }
 }
 
@@ -180,5 +313,5 @@ void PerditClient::OnDisconnection(LPVOID lp, LPSocket sock, int error) {
         printf("Server went offline (%u.%u.%u.%u)\n", ipaddr[0], ipaddr[1],
                ipaddr[2], ipaddr[3]);
     }
-    printf("Type anything to reconnect or \"exit\" to close client:");
+    printf("Type anything to reconnect or \"\\exit\" to close client:");
 }

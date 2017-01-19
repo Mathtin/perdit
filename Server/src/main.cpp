@@ -22,31 +22,25 @@ int main(int argc, char *argv[]) {
     PerditServer serv("6767", PRIVSERVKEY, PUBSERVKEY);
     cout << " [*] Perdit Server Started" << endl;
     char Buffer[PACKSIZE];
-    int num;
+    char Buffer2[MAXNAMELEN];
     LPPerditUser cl;
     while (cin >> Buffer) {
         if (strcmp(Buffer, "exit") == 0) {
             break;
         }
-        num = atoi(Buffer);
-        cin >> Buffer;
-        if (num == 0) {
-            cout << " [!] Wrong number: " << Buffer << endl;
-            continue;
-        }
+        cin >> Buffer2;
         cl = NULL;
-        for (auto i = serv.Users().begin(); i != serv.Users().end();
-             i++, num--) {
-            if (num == 1) {
-                cl = i->second;
+        for (auto i : serv.Users()) {
+            if (strncmp(Buffer, i.second->GetNickname(), MAXNAMELEN) == 0) {
+                cl = i.second;
                 break;
             }
         }
         if (!cl) {
-            cout << " [!] No such user: " << num << endl;
+            cout << " [!] No such user: " << Buffer << endl;
             continue;
         }
-        serv.Send(Buffer, PACKDATASIZE, cl, true);
+        serv.SendMessageFor(cl, 0, (byte *)Buffer2, PACKDATASIZE);
     }
     serv.Stop();
     return 0;

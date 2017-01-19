@@ -13,12 +13,12 @@ PackageManager::~PackageManager() {
 }
 
 void PackageManager::Push(LPPackage p) {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     q.push(p);
 }
 
 LPPackage PackageManager::Pop(void) {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     if (!q.size()) {
         return nullptr;
     }
@@ -29,35 +29,35 @@ LPPackage PackageManager::Pop(void) {
 
 void PackageManager::WaitForPackages() {
     std::unique_lock<std::mutex> lck(mtx);
-    if (bStoppedRecv) {
+    if (bStoppedRecv || q.size() != 0) {
         return;
     }
     cv.wait(lck);
 }
 
 bool PackageManager::PackagesAvailable() {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     return q.size() != 0;
 }
 
 size_t PackageManager::NumPackagesAvailable() {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     return q.size();
 }
 
 bool PackageManager::Recieving() {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     return !bStoppedRecv;
 }
 
 void PackageManager::StopRecieve() {
-    std::unique_lock<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     bStoppedRecv = true;
     cv.notify_all();
 }
 
 void PackageManager::ContinueRecieve() {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     bStoppedRecv = false;
 }
 
@@ -87,14 +87,14 @@ void PackageManager::SocketReciever(LPVOID lp, Socket *s, size_t Recieved) {
 }
 
 int PackageManager::RecieveFrom(LPSocket sock, DiscSocketFunc df, LPVOID arg) {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     bStoppedRecv = false;
     return sock->StartRecieving(&PackageManager::SocketReciever, this, df, arg,
                                 (char *)Buffer, BufferSize);
 }
 
 byte *PackageManager::GetBuffer() {
-    std::lock_guard<std::mutex> lock(mtx);
+    std::unique_lock<std::mutex> lck(mtx);
     return Buffer;
 }
 
