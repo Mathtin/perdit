@@ -5,7 +5,6 @@
 #include <map>
 #include <stack>
 #include <mutex>
-#include <condition_variable>
 #include <cstdint>
 #include <RSAKeyManager.h>
 #include <PackageManager.h>
@@ -71,12 +70,13 @@ class PerditServer {
     std::stack<LPPerditUser> oldusers;
     std::stack<Task *> pendingTasks;
     std::mutex mtx;
-    std::condition_variable cv;
+    HANDLE hNewTaskEvent;
     HANDLE hPackageProcessRoutine, hTaskProcessRoutine;
     DWORD WINAPI PackageProcessRoutine();
     DWORD WINAPI TaskProcessRoutine();
     int Send(const char *data, size_t size, uint64_t uid, bool encrypt);
     int Send(const char *data, size_t size, LPPerditUser user, bool encrypt);
+    void StopTasking();
     // Static Members
     static void OnConnection(LPVOID lp, LPSocket sock, LPSOCKADDR_IN local);
     static void OnDisconnection(LPVOID lp, LPSocket sock, int error);

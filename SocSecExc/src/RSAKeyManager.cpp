@@ -9,7 +9,8 @@ int RSAKeyManager::NewKey() {
     InvertibleRSAFunction keyPair;
     keyPair.Initialize(rng, RSAKeySizeBits);
 
-    RSA::PublicKey pkey(keyPair);
+    pkey.AssignFrom(keyPair);
+    prkey.AssignFrom(keyPair);
     RSA::PrivateKey prkey(keyPair);
     PublicKeyBin.Clear();
     pkey.DEREncode(PublicKeyBin);

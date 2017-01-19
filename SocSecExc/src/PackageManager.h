@@ -3,7 +3,6 @@
 
 #include <queue>
 #include <mutex>
-#include <condition_variable>
 #include <cstdint>
 #include "Socket.h"
 #include "RSAKeyManager.h"
@@ -68,7 +67,7 @@ class PackageManager {
     std::queue<LPPackage> q;
     byte Buffer[PACKSIZE << 4];
     std::mutex mtx;
-    std::condition_variable cv;
+    HANDLE hNewPackage;
     uint64_t PackagesRecieved;
     // Static members
     static void SocketReciever(LPVOID pm, Socket *s, size_t Recieved);

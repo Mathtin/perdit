@@ -95,7 +95,7 @@ class ListeningSocket : public Socket {
     HANDLE hListeningThread;
     HANDLE Events[EventsNum];
     LPVOID ListenArg;
-
+    DWORD Bytes;
     DWORD WINAPI ListeningFunc();
     // Static members
     static DWORD64 dwlListeningSockets;
@@ -113,5 +113,7 @@ class ConnectingSocket : public Socket {
   private:
     bool bConnected;
 };
+
+bool FileExist(const char *name);
 
 #endif // !SocketManager_H

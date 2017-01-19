@@ -48,6 +48,7 @@ class PerditClient {
     const std::vector<Contact *> &GetContactList();
 
     int SendMessage(const char *msg, size_t size, const char *nick);
+    int SendMessage(const char *msg, size_t size, uint64_t uid);
 
   private:
     RSAKeyManager km;

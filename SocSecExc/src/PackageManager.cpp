@@ -2,14 +2,18 @@
 
 const size_t PackageManager::BufferSize = PACKSIZE << 4;
 
-PackageManager::PackageManager() : bStoppedRecv(false), PackagesRecieved(0) {}
+PackageManager::PackageManager() : bStoppedRecv(false), PackagesRecieved(0) {
+    hNewPackage = CreateEvent(NULL, TRUE, FALSE, NULL);
+}
 
 PackageManager::~PackageManager() {
     LPPackage p;
+    SetEvent(hNewPackage);
     while (q.size()) {
         p = Pop();
         delete p;
     }
+    CloseHandle(hNewPackage);
 }
 
 void PackageManager::Push(LPPackage p) {
@@ -28,11 +32,11 @@ LPPackage PackageManager::Pop(void) {
 }
 
 void PackageManager::WaitForPackages() {
-    std::unique_lock<std::mutex> lck(mtx);
     if (bStoppedRecv || q.size() != 0) {
         return;
     }
-    cv.wait(lck);
+    WaitForSingleObject(hNewPackage, INFINITE);
+    ResetEvent(hNewPackage);
 }
 
 bool PackageManager::PackagesAvailable() {
@@ -53,7 +57,7 @@ bool PackageManager::Recieving() {
 void PackageManager::StopRecieve() {
     std::unique_lock<std::mutex> lck(mtx);
     bStoppedRecv = true;
-    cv.notify_all();
+    SetEvent(hNewPackage);
 }
 
 void PackageManager::ContinueRecieve() {
@@ -82,7 +86,7 @@ void PackageManager::SocketReciever(LPVOID lp, Socket *s, size_t Recieved) {
         Offset += toWrite;
     }
     if (pm->q.size()) {
-        pm->cv.notify_all();
+        SetEvent(pm->hNewPackage);
     }
 }
 

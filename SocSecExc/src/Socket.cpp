@@ -117,7 +117,7 @@ struct in_addr Socket::Addr() {
         return addr->sin_addr;
     }
     struct in_addr clean;
-    clean.S_un.S_addr = 0;
+    ZeroMemory(&clean, sizeof(clean));
     return clean;
 }
 
@@ -172,6 +172,11 @@ int Socket::StartRecieving(RecvSocketFunc f, LPVOID recvarg, DiscSocketFunc df,
     }
     hRecvThreadHandle = CreateThread(
         NULL, 0, (LPTHREAD_START_ROUTINE)&Socket::RecievingFunc, this, 0, NULL);
+    if (hRecvThreadHandle == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "Failed to create RecvThread: %lu\n", GetLastError());
+        bRecieving = false;
+        return 1;
+    }
     return 0;
 }
 
@@ -247,6 +252,12 @@ ListeningSocket::ListeningSocket(PCSTR port) {
     int iResult;
     bBinded = false;
     bListening = false;
+    bAccepting = false;
+    fCallback = nullptr;
+    acceptedSocket = INVALID_SOCKET;
+    hListeningThread = INVALID_HANDLE_VALUE;
+    ListenArg = nullptr;
+    Bytes = 0;
     struct addrinfo hints;
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -301,7 +312,6 @@ ListeningSocket::~ListeningSocket() {
 int ListeningSocket::StartAccepting(AcceptSocketFunc callback, LPVOID arg) {
     fCallback = callback;
     ListenArg = arg;
-    DWORD Bytes;
     hAcceptConnectionEvent = Overlapped.hEvent = WSACreateEvent();
     if (hAcceptConnectionEvent == WSA_INVALID_EVENT) {
         fprintf(stderr, "WSACreateEvent() failed with error %d\n",
@@ -319,6 +329,12 @@ int ListeningSocket::StartAccepting(AcceptSocketFunc callback, LPVOID arg) {
     hListeningThread = CreateThread(
         NULL, 0, (LPTHREAD_START_ROUTINE)&ListeningSocket::ListeningFunc, this,
         0, NULL);
+    if (hListeningThread == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "Failed to create ListeningThread: %lu\n",
+                GetLastError());
+        bRecieving = false;
+        return 1;
+    }
     return 0;
 }
 
@@ -354,10 +370,9 @@ bool ListeningSocket::Accepting() {
 }
 
 DWORD WINAPI ListeningSocket::ListeningFunc() {
-    DWORD Bytes;
     DWORD Index;
-    DWORD Flags;
-    DWORD BytesTransferred;
+    DWORD Flags = 0;
+    DWORD BytesTransferred = 0;
     BOOL bRes;
     while (TRUE) {
         Index = WSAWaitForMultipleEvents(EventsNum, Events, FALSE, WSA_INFINITE,
@@ -496,3 +511,11 @@ int ConnectingSocket::Connect() {
 
 #undef hCloseSocketEvent
 #undef hAcceptConnectionEvent
+
+bool FileExist(const char *name) {
+    WIN32_FIND_DATA fdata;
+    HANDLE search = FindFirstFile(name, &fdata);
+    bool found = search != INVALID_HANDLE_VALUE;
+    FindClose(search);
+    return found;
+}

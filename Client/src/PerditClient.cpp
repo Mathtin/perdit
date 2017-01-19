@@ -6,7 +6,12 @@ PerditClient::PerditClient(const char *sIP, const char *sPort,
     startedRecievingContactsList = false;
     HandShaked = false;
     PackagesSended = 0;
-    km.Load(PublicKeyFile, PrivateKeyFile);
+    if (!FileExist(PrivateKeyFile) || !FileExist(PublicKeyFile)) {
+        km.NewKey();
+        km.Save(PublicKeyFile, PrivateKeyFile);
+    } else {
+        km.Load(PublicKeyFile, PrivateKeyFile);
+    }
     memcpy(NickName, nick, MAXNAMELEN);
     NickName[MAXNAMELEN - 1] = '\0';
     sock = new ConnectingSocket(sIP, sPort);
@@ -177,6 +182,29 @@ int PerditClient::SendMessage(const char *msg, size_t size, const char *nick) {
     return 0;
 }
 
+int PerditClient::SendMessage(const char *msg, size_t size, uint64_t uid) {
+    if (!HandShaked) {
+        return 1;
+    }
+    auto nick = NickNameByUID(uid);
+    if (!nick) {
+        return 1;
+    }
+    uid = htonll(uid);
+    Package p(id, PackagesSended);
+    byte ctrl = CTRLNewMessage;
+    p.Write(&ctrl, 1);
+    p.Write((byte *)&uid, 8);
+    ctrl = size;
+    p.Write(&ctrl, 1);
+    p.Write((byte *)msg, ctrl);
+    p.Encrypt(ServKey);
+    p.Sign(km.GetPrivateKey());
+    p.Send(sock);
+    PackagesSended++;
+    return 0;
+}
+
 DWORD WINAPI PerditClient::PackageProcessRoutine() {
     byte Buffer[PACKDATASIZE];
     Package *p;
@@ -240,7 +268,7 @@ DWORD WINAPI PerditClient::PackageProcessRoutine() {
                     AskForContactList();
                     printf("[?]:%s\n", Buffer);
                 }
-                printf("%s:%s\n", nick, Buffer);
+                printf("%s: %s\n", nick, Buffer);
                 break;
             }
             case CTRLMessageAccepted: {

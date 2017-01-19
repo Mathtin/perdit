@@ -5,7 +5,13 @@ PerditServer::PerditServer(const char *sPort, const char *PrivateKeyFile,
     PackagesSended = 0;
     bActive = false;
     sock = nullptr;
-    km.Load(PublicKeyFile, PrivateKeyFile);
+    hPackageProcessRoutine = hTaskProcessRoutine = INVALID_HANDLE_VALUE;
+    if (!FileExist(PrivateKeyFile) || !FileExist(PublicKeyFile)) {
+        km.NewKey();
+        km.Save(PublicKeyFile, PrivateKeyFile);
+    } else {
+        km.Load(PublicKeyFile, PrivateKeyFile);
+    }
     sock = new ListeningSocket(sPort);
     if (!sock->Listening()) {
         return;
@@ -22,6 +28,7 @@ PerditServer::PerditServer(const char *sPort, const char *PrivateKeyFile,
                 GetLastError());
         return;
     }
+    hNewTaskEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
     hTaskProcessRoutine = CreateThread(
         NULL, 0, (LPTHREAD_START_ROUTINE)&TaskProcessRoutine, this, 0, NULL);
     if (hTaskProcessRoutine == INVALID_HANDLE_VALUE) {
@@ -36,12 +43,13 @@ PerditServer::~PerditServer() {
     pm.StopRecieve();
     if (bActive) {
         bActive = false;
-        cv.notify_all();
+        SetEvent(hNewTaskEvent);
         WaitForSingleObject(hPackageProcessRoutine, INFINITE);
         CloseHandle(hPackageProcessRoutine);
         WaitForSingleObject(hTaskProcessRoutine, INFINITE);
         CloseHandle(hTaskProcessRoutine);
         sock->StopAccepting();
+        CloseHandle(hNewTaskEvent);
     }
     while (oldusers.size()) {
         delete oldusers.top();
@@ -53,17 +61,24 @@ PerditServer::~PerditServer() {
     delete sock;
 }
 
+void PerditServer::StopTasking() {
+    std::unique_lock<std::mutex> lck(mtx);
+    bActive = false;
+    SetEvent(hNewTaskEvent);
+}
+
 void PerditServer::Stop() {
-    // std::lock_guard<std::mutex> lock(mtx);
+    printf("Stop unique_lock\n");
+    printf("Stop unique_lock success\n");
     pm.StopRecieve();
     if (bActive) {
-        bActive = false;
-        cv.notify_all();
+        StopTasking();
         WaitForSingleObject(hPackageProcessRoutine, INFINITE);
         CloseHandle(hPackageProcessRoutine);
         WaitForSingleObject(hTaskProcessRoutine, INFINITE);
         CloseHandle(hTaskProcessRoutine);
         sock->StopAccepting();
+        CloseHandle(hNewTaskEvent);
     }
     while (oldusers.size()) {
         delete oldusers.top();
@@ -77,27 +92,41 @@ void PerditServer::Stop() {
 }
 
 std::map<uint64_t, LPPerditUser> &PerditServer::Users() {
+    // printf("Users unique_lock\n");
+    std::unique_lock<std::mutex> lck(mtx);
+    // printf("Users unique_lock success\n");
     return users;
 }
 
 bool PerditServer::Active() {
-    // std::lock_guard<std::mutex> lock(mtx);
+    // printf("Active unique_lock\n");
+    std::unique_lock<std::mutex> lck(mtx);
+    // printf("Active unique_lock success\n");
     return bActive;
 }
 
 void PerditServer::SendMessageFor(uint64_t uid, uint64_t from, byte *msg,
                                   size_t msgsize) {
+    // printf("SendMessageFor unique_lock\n");
+    std::unique_lock<std::mutex> lck(mtx);
+    // printf("SendMessageFor unique_lock success\n");
     pendingTasks.push(new Task(CTRLNewMessage, msg, msgsize, from, uid));
-    cv.notify_all();
+    SetEvent(hNewTaskEvent);
 }
 
 void PerditServer::SendContactList(uint64_t uid) {
+    // printf("SendContactList unique_lock\n");
+    std::unique_lock<std::mutex> lck(mtx);
+    // printf("SendContactList unique_lock success\n");
     pendingTasks.push(new Task(CTRLContactList, nullptr, 0, 0, uid));
-    cv.notify_all();
+    SetEvent(hNewTaskEvent);
 }
 
 void PerditServer::SendMessageFor(LPPerditUser user, uint64_t from, byte *msg,
                                   size_t msgsize) {
+    // printf("SendMessageFor unique_lock\n");
+    std::unique_lock<std::mutex> lck(mtx);
+    // printf("SendMessageFor unique_lock success\n");
     Package p(0, PackagesSended);
     byte ctrl = CTRLNewMessage, mmsg = msgsize;
     from = htonll(from);
@@ -113,7 +142,9 @@ void PerditServer::SendMessageFor(LPPerditUser user, uint64_t from, byte *msg,
 
 int PerditServer::Send(const char *data, size_t size, uint64_t uid,
                        bool encrypt) {
-    // std::lock_guard<std::mutex> lock(mtx);
+    // printf("Send unique_lock\n");
+    std::unique_lock<std::mutex> lck(mtx);
+    // printf("Send unique_lock success\n");
     auto u = users.find(uid);
     if (u == users.end()) {
         return 1;
@@ -135,7 +166,9 @@ int PerditServer::Send(const char *data, size_t size, uint64_t uid,
 
 int PerditServer::Send(const char *data, size_t size, LPPerditUser user,
                        bool encrypt) {
-    // std::lock_guard<std::mutex> lock(mtx);
+    // printf("Send unique_lock\n");
+    std::unique_lock<std::mutex> lck(mtx);
+    // printf("Send unique_lock success\n");
     if (user->Status() == UserAwaitHandshake ||
         user->Status() == UserStatusUnknown) {
         return 0;
@@ -156,6 +189,7 @@ DWORD WINAPI PerditServer::PackageProcessRoutine() {
     LPPerditUser user;
     while (true) {
         pm.WaitForPackages();
+        mtx.lock();
         while (oldusers.size()) {
             delete oldusers.top();
             oldusers.pop();
@@ -171,6 +205,7 @@ DWORD WINAPI PerditServer::PackageProcessRoutine() {
         } else {
             user = u->second;
         }
+        mtx.unlock();
         int res1 = 0, res2 = 0;
         PackageType ptype = p->Type();
         if (ptype == SignedPackage) {
@@ -185,8 +220,10 @@ DWORD WINAPI PerditServer::PackageProcessRoutine() {
                 if (user->ID() != userID) {
                     printf(" [*] Handshake failed from %llu (dropping)\n",
                            user->ID());
+                    mtx.lock();
                     delete users[user->ID()];
                     users.erase(user->ID());
+                    mtx.unlock();
                     delete p;
                     continue;
                 }
@@ -201,9 +238,13 @@ DWORD WINAPI PerditServer::PackageProcessRoutine() {
                     2 + sizeof(uint64_t) + Buffer[1 + sizeof(uint64_t)];
                 user->SetNickname((char *)Buffer + nicknameoff);
                 printf(" [*] Handshake from %s\n", user->GetNickname());
+                mtx.lock();
                 for (auto u : users) {
-                    SendContactList(u.second->ID());
+                    pendingTasks.push(new Task(CTRLContactList, nullptr, 0, 0,
+                                               u.second->ID()));
                 }
+                SetEvent(hNewTaskEvent);
+                mtx.unlock();
             }
             delete p;
             continue;
@@ -252,8 +293,12 @@ DWORD WINAPI PerditServer::TaskProcessRoutine() {
     Task *t;
     LPPackage p;
     while (bActive) {
-        std::unique_lock<std::mutex> lck(mtx);
-        cv.wait(lck);
+        // mtx->unlock();
+        // printf("TaskProcessRoutine unique_lock wait\n");
+        WaitForSingleObject(hNewTaskEvent, INFINITE);
+        ResetEvent(hNewTaskEvent);
+        // printf("TaskProcessRoutine unique_lock my time!\n");
+        // mtx->lock();
         while (pendingTasks.size()) {
             t = pendingTasks.top();
             pendingTasks.pop();
@@ -359,13 +404,15 @@ DWORD WINAPI PerditServer::TaskProcessRoutine() {
 
 void PerditServer::OnConnection(LPVOID lp, LPSocket sock, LPSOCKADDR_IN local) {
     LPPerditServer serv = (LPPerditServer)lp;
-    // std::lock_guard<std::mutex> lock(serv->mtx);
     struct in_addr addr = sock->Addr();
     printf(" [!] Connected from: %u.%u.%u.%u\n", (uint)addr.S_un.S_un_b.s_b1,
            (uint)addr.S_un.S_un_b.s_b2, (uint)addr.S_un.S_un_b.s_b3,
            (uint)addr.S_un.S_un_b.s_b4);
     printf(" [ ] Opened sockets: %lu\n", Socket::OpenedSockets());
     LPPerditUser user = new PerditUser(sock, sock->SocketID(), local);
+    // printf("OnConnection unique_lock\n");
+    std::unique_lock<std::mutex> lck(serv->mtx);
+    // printf("OnConnection unique_lock success\n");
     serv->users.insert(std::make_pair(user->ID(), user));
     serv->pm.RecieveFrom(sock, &PerditServer::OnDisconnection, serv);
     Package p(1, serv->PackagesSended);
@@ -384,8 +431,10 @@ void PerditServer::OnConnection(LPVOID lp, LPSocket sock, LPSOCKADDR_IN local) {
 
 void PerditServer::OnDisconnection(LPVOID lp, LPSocket sock, int error) {
     LPPerditServer serv = (LPPerditServer)lp;
+    // printf("OnDisconnection unique_lock\n");
+    std::unique_lock<std::mutex> lck(serv->mtx);
+    // printf("OnDisconnection unique_lock success\n");
     LPPerditUser user = serv->users[sock->SocketID()];
-    // std::lock_guard<std::mutex> lock(serv->mtx);
     uint16_t ipaddr[4] = {
         sock->Addr().S_un.S_un_b.s_b1, sock->Addr().S_un.S_un_b.s_b2,
         sock->Addr().S_un.S_un_b.s_b3, sock->Addr().S_un.S_un_b.s_b4};
@@ -403,6 +452,8 @@ void PerditServer::OnDisconnection(LPVOID lp, LPSocket sock, int error) {
     serv->oldusers.push(user);
     serv->users.erase(sock->SocketID());
     for (auto u : serv->users) {
-        serv->SendContactList(u.second->ID());
+        serv->pendingTasks.push(
+            new Task(CTRLContactList, nullptr, 0, 0, u.second->ID()));
     }
+    SetEvent(serv->hNewTaskEvent);
 }
