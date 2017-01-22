@@ -168,6 +168,9 @@ int PerditClient::SendMessage(const char *msg, size_t size, const char *nick) {
     if (!uid) {
         return 1;
     }
+    if (size > 255) {
+        size = 255;
+    }
     Package p(id, PackagesSended);
     byte ctrl = CTRLNewMessage;
     p.Write(&ctrl, 1);
@@ -189,6 +192,9 @@ int PerditClient::SendMessage(const char *msg, size_t size, uint64_t uid) {
     auto nick = NickNameByUID(uid);
     if (!nick) {
         return 1;
+    }
+    if (size > 255) {
+        size = 255;
     }
     uid = htonll(uid);
     Package p(id, PackagesSended);

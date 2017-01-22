@@ -77,8 +77,14 @@ void printhelp() {
 }
 
 int main(int argc, char *argv[]) {
+    const char *sPort;
+    if (argc > 1) {
+        sPort = argv[1];
+    } else {
+        sPort = "6767";
+    }
     printf(" [*] Starting Perdit Server\n");
-    PerditServer serv("6767", PRIVSERVKEY, PUBSERVKEY);
+    PerditServer serv(sPort, PRIVSERVKEY, PUBSERVKEY);
     if (!serv.Active()) {
         system("PAUSE");
         return 1;
