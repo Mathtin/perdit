@@ -4,10 +4,12 @@ This is a brand new messaging system using RSA encryption. Main advantage of thi
 ##What do you need to build
 This project using Windows sockets in it's current condition and cryptopp library, and was compiled using GNU toolchain with help of MSYS2 (MINGW).`
 So next few things you'll need to build this project:
+
 1. Windows
 2. MINGW
 3. MAKE
 4. cryptopp.dll
+
 Or you can just download lates release, compiled for x86_64 windows operating system.
 
 ##How to build
